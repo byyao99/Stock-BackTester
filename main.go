@@ -30,16 +30,17 @@ func main() {
 	rsiHigh := flag.Float64("rsi-high", 70, "RSI overbought threshold")
 	cash := flag.Float64("cash", 1_000_000, "initial cash")
 	outRoot := flag.String("out", "results", "output root directory")
+	oddLot := flag.Bool("odd-lot", false, "allow odd-lot trading (TW: 1-share lots instead of 1000)")
 	flag.Parse()
 
 	if err := run(*symbol, *startStr, *endStr, *stratName, *short, *long,
-		*rsiPeriod, *rsiLow, *rsiHigh, *cash, *outRoot); err != nil {
+		*rsiPeriod, *rsiLow, *rsiHigh, *cash, *outRoot, *oddLot); err != nil {
 		log.Fatalf("backtest failed: %v", err)
 	}
 }
 
 func run(symbol, startStr, endStr, stratName string, short, long, rsiPeriod int,
-	rsiLow, rsiHigh, cash float64, outRoot string) error {
+	rsiLow, rsiHigh, cash float64, outRoot string, oddLot bool) error {
 
 	if symbol == "" || startStr == "" || endStr == "" || stratName == "" {
 		flag.Usage()
@@ -63,6 +64,10 @@ func run(symbol, startStr, endStr, stratName string, short, long, rsiPeriod int,
 	}
 
 	market := data.MarketOf(symbol)
+	if oddLot && market.LotSize > 1 {
+		market.LotSize = 1
+		market.Name += "-oddlot"
+	}
 	fmt.Printf("Loading %s [%s → %s] (market=%s)\n", symbol, startStr, endStr, market.Name)
 	bars, fromCache, err := data.LoadOrFetch(symbol, start, end)
 	if err != nil {
