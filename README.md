@@ -124,7 +124,9 @@ go run . \
   "win_rate": 0.375,
   "profit_factor": 3.689,
   "trade_count": 17,
-  "round_trip_count": 8
+  "round_trip_count": 8,
+  "buy_hold_return": 1.4910,
+  "alpha": -0.0976
 }
 ```
 
@@ -136,6 +138,8 @@ go run . \
 - **sharpe_ratio**：日報酬計算後年化（`× √252`），無風險利率 2%
 - **win_rate**：獲利的 round trip 數 / 總 round trip 數（一個 BUY→SELL 配對為一個 round trip）
 - **profit_factor**：總獲利金額 / 總虧損金額；若沒有虧損 round trip 則為 `null`，CLI 顯示 `n/a`
+- **buy_hold_return**：同期間「買進並持有」的對照報酬；`bars[1].Open` 進場、`bars[-1].Close` mark-to-market，使用相同 lot/fee 規則；現金不夠 1 張時為 `null`
+- **alpha**：`total_return − buy_hold_return`；正值代表策略贏被動持有，負值代表沒有 alpha（不如躺平）
 
 ---
 

@@ -19,4 +19,6 @@ type Summary struct {
 	ProfitFactor   *float64  `json:"profit_factor"`
 	TradeCount     int       `json:"trade_count"`
 	RoundTripCount int       `json:"round_trip_count"`
+	BuyHoldReturn  *float64  `json:"buy_hold_return"` // nil if cash can't afford 1 lot
+	Alpha          *float64  `json:"alpha"`           // total_return - buy_hold_return
 }

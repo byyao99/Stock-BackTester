@@ -96,6 +96,12 @@ func run(symbol, startStr, endStr, stratName string, short, long, rsiPeriod int,
 	}
 
 	metrics := analysis.Compute(res.EquityCurve, res.Trades, cash)
+	bhReturn := engine.BuyHold(bars, cash, market)
+	var alpha *float64
+	if bhReturn != nil {
+		a := metrics.TotalReturn - *bhReturn
+		alpha = &a
+	}
 	summary := analysis.Summary{
 		Symbol:         symbol,
 		Strategy:       strat.Name(),
@@ -113,6 +119,8 @@ func run(symbol, startStr, endStr, stratName string, short, long, rsiPeriod int,
 		ProfitFactor:   metrics.ProfitFactor,
 		TradeCount:     len(res.Trades),
 		RoundTripCount: metrics.RoundTripCount,
+		BuyHoldReturn:  bhReturn,
+		Alpha:          alpha,
 	}
 
 	outDir := filepath.Join(outRoot, fmt.Sprintf("%s_%s_%s",
@@ -167,6 +175,18 @@ func printSummary(s analysis.Summary, outDir string) {
 	fmt.Printf("  Final Equity   : %.2f\n", s.FinalEquity)
 	fmt.Printf("  Total Return   : %.2f%%\n", s.TotalReturn*100)
 	fmt.Printf("  Annual Return  : %.2f%%\n", s.AnnualReturn*100)
+	if s.BuyHoldReturn != nil {
+		verdict := "BEAT"
+		if *s.Alpha < 0 {
+			verdict = "LOST TO"
+		} else if *s.Alpha == 0 {
+			verdict = "TIED"
+		}
+		fmt.Printf("  Buy & Hold     : %.2f%% (strategy %s B&H by %+.2f%%)\n",
+			*s.BuyHoldReturn*100, verdict, *s.Alpha*100)
+	} else {
+		fmt.Printf("  Buy & Hold     : n/a (cash insufficient for 1 lot at entry)\n")
+	}
 	fmt.Printf("  Max Drawdown   : %.2f%%\n", s.MaxDrawdown*100)
 	fmt.Printf("  Sharpe Ratio   : %.3f\n", s.SharpeRatio)
 	fmt.Printf("  Win Rate       : %.2f%% (%d round trips)\n", s.WinRate*100, s.RoundTripCount)
