@@ -37,6 +37,14 @@ type yahooResponse struct {
 	} `json:"chart"`
 }
 
+// FetchLatest pulls the last `days` calendar days of bars without touching the
+// cache. Use this for live "now" lookups distinct from the backtest fetch.
+func FetchLatest(symbol string, days int) ([]Bar, error) {
+	end := time.Now().UTC().AddDate(0, 0, 1) // +1 day to include today
+	start := end.AddDate(0, 0, -days)
+	return Fetch(symbol, start, end)
+}
+
 func Fetch(symbol string, start, end time.Time) ([]Bar, error) {
 	if !end.After(start) {
 		return nil, fmt.Errorf("end (%s) must be after start (%s)",

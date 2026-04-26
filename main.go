@@ -139,7 +139,53 @@ func run(symbol, startStr, endStr, stratName string, short, long, rsiPeriod int,
 	}
 
 	printSummary(summary, outDir)
+	printCurrentMarket(symbol, bars[len(bars)-1], strat)
 	return nil
+}
+
+func printCurrentMarket(symbol string, backtestEnd data.Bar, strat strategy.Strategy) {
+	fmt.Println()
+	fmt.Println("===== Current Market =====")
+
+	days := strat.MinBars() * 2
+	if days < 180 {
+		days = 180
+	}
+	latest, err := data.FetchLatest(symbol, days)
+	if err != nil {
+		fmt.Printf("  (could not fetch live data: %v)\n", err)
+		return
+	}
+	last := latest[len(latest)-1]
+
+	fmt.Printf("  Last Close     : %.2f (%s)\n", last.Close, last.Time.Format(dateLayout))
+
+	delta := last.Close - backtestEnd.Close
+	pct := delta / backtestEnd.Close * 100
+	fmt.Printf("  vs Backtest End: %+.2f%% (was %.2f on %s)\n",
+		pct, backtestEnd.Close, backtestEnd.Time.Format(dateLayout))
+
+	if len(latest) < strat.MinBars() {
+		fmt.Printf("  Latest Signal  : n/a (only %d bars fetched, need %d)\n",
+			len(latest), strat.MinBars())
+		return
+	}
+	sigs := strat.GenerateSignals(latest)
+	latestSig := sigs[len(sigs)-1]
+	fmt.Printf("  Latest Signal  : %s (decided after %s close)\n",
+		latestSig.String(), last.Time.Format(dateLayout))
+
+	if latestSig == strategy.SignalHold {
+		for i := len(sigs) - 1; i >= 0; i-- {
+			if sigs[i] != strategy.SignalHold {
+				fmt.Printf("  Last Crossover : %s on %s (%d trading days ago)\n",
+					sigs[i].String(), latest[i].Time.Format(dateLayout), len(sigs)-1-i)
+				break
+			}
+		}
+	}
+
+	fmt.Println("  Note: forward signal only — not validated on data after backtest --end.")
 }
 
 func buildStrategy(name string, short, long, rsiPeriod int, rsiLow, rsiHigh float64) (strategy.Strategy, error) {
