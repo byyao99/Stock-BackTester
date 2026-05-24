@@ -53,7 +53,7 @@ go run . \
   --cash 100000
 ```
 
-執行完後檢查 `./results/` 下的輸出資料夾。
+執行完後績效摘要與成交明細都會直接印在終端機。
 
 ---
 
@@ -71,129 +71,41 @@ go run . \
 | `--rsi-low` | `30` | 【RSI】超賣門檻（低於則買進） |
 | `--rsi-high` | `70` | 【RSI】超買門檻（高於則賣出） |
 | `--cash` | `1000000` | 起始資金（台股建議用預設，美股可下調如 `100000`） |
-| `--out` | `results` | 結果輸出根目錄 |
 | `--odd-lot` | `false` | 啟用零股交易（台股最小單位由 1000 股改為 1 股；美股本來就 1 股，加不加無差） |
-| `--mode` | `backtest` | 執行模式：`backtest`（歷史回測）或 `paper`（紙上交易，見下節） |
-| `--account-file` | `paper_accounts/{symbol}_{strategy}.json` | 【paper】帳戶狀態檔路徑 |
+| `--mode` | `backtest` | 執行模式：`backtest`（歷史回測）或 `holdcheck`（買進並持有試算） |
 
 ---
 
-## 紙上交易（Paper Trading）
+## 輸出
 
-`--mode paper` 會把策略接到「最新行情」每天執行一次：抓今日收盤、用同一組策略決定訊號、把結果累積在一個帳戶 JSON 檔裡。**沿用回測同一套執行模型** —— 今天的訊號要等明天開盤才成交，手續費、整股、全倉等規則一致。
+所有結果直接印在終端機，不寫檔。每次回測會印三段：
 
-### 用法
-
-```bash
-go run . --mode paper \
-  --symbol 2330.TW --strategy sma --short 20 --long 60 \
-  --cash 1000000
-```
-
-不需要 `--start`/`--end`。可以跑 cron / launchd 每日盤後自動更新。
-
-### 帳戶檔
-
-預設位置：`paper_accounts/2330_TW_sma_20_60.json`（依 `symbol` + 策略命名）。一個檔案對應一組 `(symbol, strategy params)`；想用不同參數請加 `--account-file` 指定新路徑。
-
-帳戶身份不符（symbol 或策略參數變動）會直接報錯，避免亂套導致帳本被汙染。
-
-### 每日流程
-
-1. 載入既有帳戶（不存在則用 `--cash` 初始化）。
-2. 抓最近 ≥ 180 個日曆日的 bars。
-3. **盤中保護**：若最新 bar 距現在不足 6 小時，視為盤未收 —— 只印當前狀態，不更新。
-4. **冪等性**：若該 bar 的日期 ≤ `last_processed_date`，視為已處理 —— 印「already processed」訊息後返回。
-5. **成交昨日訊號**：若帳戶有 `pending` 且今日 bar 日期晚於 `pending.decided_on`，按 t+1 規則於今日 bar 開盤成交。
-6. Mark-to-market：以今日收盤計算總資產，附加一筆 `daily_equity`。
-7. 計算今日訊號：BUY（且空手）或 SELL（且持倉）→ 寫入 `pending` 等明日成交；其他狀況清空 `pending`。
-8. 持久化（`tmp + rename` 原子寫入）。
-9. 印當日報告。
-
-成交事件與新訊號排隊都會以 `ALERT:` 開頭印到 stderr（未來會接 LINE）。
-
-### 報告範例
+### 績效摘要（Backtest Summary）
 
 ```
-===== Paper Trading Daily Report =====
-  Date           : 2026-04-25
+===== Backtest Summary =====
   Symbol         : 2330.TW (TW)
   Strategy       : sma_20_60
-  Cash           : 412,300.00
-  Shares         : 2,000 @ avg 587.50
-  Last Close     : 612.00 → position 1,224,000.00
-  Total Assets   : 1,636,300.00
-  Today's P&L    : +24,500.00 (+1.52%)
-  Total Return   : +63.63% vs initial 1,000,000.00
-  Pending Signal : SELL decided 2026-04-25 close (executes next open)
-  Recent Trades  : 3 in last 30 sessions (total 12)
+  Period         : 2020-01-02 → 2024-12-30 (1214 trading days)
+  Initial Cash   : 1000000.00
+  Final Equity   : 2393379.09
+  Total Return   : 139.34%
+  Annual Return  : 19.88%
+  Buy & Hold     : 149.10% (strategy LOST TO B&H by -9.76%)
+  Max Drawdown   : 37.18%
+  Sharpe Ratio   : 0.926
+  Win Rate       : 37.50% (8 round trips)
+  Profit Factor  : 3.689
+  Trade Count    : 17
 ```
 
-### 與回測的差異
+### 成交明細（Trades）
 
-| | 回測 | 紙上交易 |
-|---|---|---|
-| 執行頻率 | 一次跑完整段 | 每天一次 |
-| 資料來源 | 快取 / Yahoo（指定區間） | Yahoo 最新 N 天 |
-| 狀態 | 無，跑完即丟 | 累積在 `paper_account.json` |
-| 訊號 → 成交 | t 收盤 → t+1 開盤（同一次計算） | 今日收盤 → 明日開盤（跨兩次執行） |
-| 輸出 | `results/` 三個檔 | `paper_accounts/{...}.json` + stdout 報告 |
+每一筆成交逐列印出：日期、方向（BUY/SELL）、成交價（隔日開盤）、股數、手續費、證交稅（僅台股賣方）、成交後現金餘額。
 
----
+### 當前行情（Current Market）
 
-## 輸出檔案
-
-每次執行會在 `./results/{symbol}_{strategy}_{timestamp}/` 底下產生三個檔案：
-
-### `trades.csv`
-每一筆成交紀錄。
-
-| 欄位 | 說明 |
-| --- | --- |
-| `time` | 成交時間（UTC, RFC3339） |
-| `side` | `BUY` 或 `SELL` |
-| `price` | 成交價（隔日開盤價） |
-| `shares` | 股數 |
-| `fee` | 手續費 |
-| `tax` | 證交稅（僅台股賣方有，美股 0） |
-| `cash_after` | 成交後現金餘額 |
-
-### `equity_curve.csv`
-每日資產曲線。
-
-| 欄位 | 說明 |
-| --- | --- |
-| `time` | 收盤日期 |
-| `cash` | 現金 |
-| `shares` | 持有股數 |
-| `position_value` | 部位市值 = `shares × close` |
-| `total` | 總資產 = `cash + position_value` |
-
-### `summary.json`
-績效摘要。
-
-```json
-{
-  "symbol": "2330.TW",
-  "strategy": "sma_20_60",
-  "market": "TW",
-  "start": "2020-01-02T01:00:00Z",
-  "end": "2024-12-30T01:00:00Z",
-  "trading_days": 1214,
-  "initial_cash": 1000000,
-  "final_equity": 2393379.09,
-  "total_return": 1.3934,
-  "annual_return": 0.1988,
-  "max_drawdown": 0.3718,
-  "sharpe_ratio": 0.926,
-  "win_rate": 0.375,
-  "profit_factor": 3.689,
-  "trade_count": 17,
-  "round_trip_count": 8,
-  "buy_hold_return": 1.4910,
-  "alpha": -0.0976
-}
-```
+回測結束後另抓最新行情，比對最後收盤、印出最新訊號（前瞻參考用，不計入回測績效）。
 
 指標定義：
 
@@ -274,19 +186,9 @@ stock-backtester/
 │   ├── broker.go         手續費、整股換算
 │   ├── trade.go          Trade record
 │   └── equity.go         EquityPoint
-├── analysis/
-│   ├── metrics.go        Total/Annual/MDD/Sharpe/WinRate/PF
-│   └── summary.go        Summary struct
-├── output/
-│   ├── csv.go            trades.csv, equity_curve.csv
-│   └── json.go           summary.json
-└── paper_trading/
-    ├── account.go        Account / StratParams / PendingSignal、Load/Save
-    ├── executor.go       ExecutePending（在新 bar 開盤成交）
-    ├── session.go        RunDailyUpdate 每日 tick 協調器
-    ├── notifier.go       Notifier interface + ConsoleNotifier
-    ├── report.go         FormatDailyReport
-    └── paths.go          DefaultAccountPath
+└── analysis/
+    ├── metrics.go        Total/Annual/MDD/Sharpe/WinRate/PF
+    └── summary.go        Summary struct
 ```
 
 ---

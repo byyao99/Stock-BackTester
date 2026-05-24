@@ -5,16 +5,12 @@ import (
 	"fmt"
 	"log"
 	"math"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
 	"stock-backtester/analysis"
 	"stock-backtester/data"
 	"stock-backtester/engine"
-	"stock-backtester/output"
-	papertrading "stock-backtester/paper_trading"
 	"stock-backtester/strategy"
 )
 
@@ -31,35 +27,27 @@ func main() {
 	rsiLow := flag.Float64("rsi-low", 30, "RSI oversold threshold")
 	rsiHigh := flag.Float64("rsi-high", 70, "RSI overbought threshold")
 	cash := flag.Float64("cash", 1_000_000, "initial cash")
-	outRoot := flag.String("out", "results", "output root directory")
-	noOutput := flag.Bool("no-output", false, "skip writing trades.csv / equity_curve.csv / summary.json (terminal only)")
 	oddLot := flag.Bool("odd-lot", false, "allow odd-lot trading (TW: 1-share lots instead of 1000)")
-	mode := flag.String("mode", "backtest", "execution mode: backtest | paper | holdcheck")
-	accountFile := flag.String("account-file", "", "paper-mode account JSON path (default paper_accounts/{symbol}_{strategy}.json)")
+	mode := flag.String("mode", "backtest", "execution mode: backtest | holdcheck")
 	flag.Parse()
 
 	switch strings.ToLower(*mode) {
 	case "backtest":
 		if err := run(*symbol, *startStr, *endStr, *stratName, *short, *long,
-			*rsiPeriod, *rsiLow, *rsiHigh, *cash, *outRoot, *oddLot, *noOutput); err != nil {
+			*rsiPeriod, *rsiLow, *rsiHigh, *cash, *oddLot); err != nil {
 			log.Fatalf("backtest failed: %v", err)
-		}
-	case "paper":
-		if err := runPaper(*symbol, *stratName, *short, *long,
-			*rsiPeriod, *rsiLow, *rsiHigh, *cash, *accountFile, *oddLot); err != nil {
-			log.Fatalf("paper trading failed: %v", err)
 		}
 	case "holdcheck":
 		if err := runHoldCheck(*symbol, *startStr, *endStr, *cash, *oddLot); err != nil {
 			log.Fatalf("hold check failed: %v", err)
 		}
 	default:
-		log.Fatalf("unknown --mode %q (want backtest | paper | holdcheck)", *mode)
+		log.Fatalf("unknown --mode %q (want backtest | holdcheck)", *mode)
 	}
 }
 
 func run(symbol, startStr, endStr, stratName string, short, long, rsiPeriod int,
-	rsiLow, rsiHigh, cash float64, outRoot string, oddLot, noOutput bool) error {
+	rsiLow, rsiHigh, cash float64, oddLot bool) error {
 
 	if symbol == "" || startStr == "" || endStr == "" || stratName == "" {
 		flag.Usage()
@@ -142,25 +130,8 @@ func run(symbol, startStr, endStr, stratName string, short, long, rsiPeriod int,
 		Alpha:          alpha,
 	}
 
-	outDir := ""
-	if !noOutput {
-		outDir = filepath.Join(outRoot, fmt.Sprintf("%s_%s_%s",
-			safeName(symbol), strat.Name(), time.Now().Format("20060102_150405")))
-		if err := os.MkdirAll(outDir, 0o755); err != nil {
-			return err
-		}
-		if err := output.WriteTrades(filepath.Join(outDir, "trades.csv"), res.Trades); err != nil {
-			return err
-		}
-		if err := output.WriteEquity(filepath.Join(outDir, "equity_curve.csv"), res.EquityCurve); err != nil {
-			return err
-		}
-		if err := output.WriteSummary(filepath.Join(outDir, "summary.json"), summary); err != nil {
-			return err
-		}
-	}
-
-	printSummary(summary, outDir)
+	printSummary(summary)
+	printTrades(res.Trades, market)
 	printCurrentMarket(symbol, bars[len(bars)-1], strat)
 	return nil
 }
@@ -208,40 +179,6 @@ func printCurrentMarket(symbol string, backtestEnd data.Bar, strat strategy.Stra
 	}
 
 	fmt.Println("  Note: forward signal only — not validated on data after backtest --end.")
-}
-
-func runPaper(symbol, stratName string, short, long, rsiPeriod int,
-	rsiLow, rsiHigh, cash float64, accountFile string, oddLot bool) error {
-
-	if symbol == "" || stratName == "" {
-		return fmt.Errorf("--symbol and --strategy are required for paper mode")
-	}
-	strat, err := buildStrategy(stratName, short, long, rsiPeriod, rsiLow, rsiHigh)
-	if err != nil {
-		return err
-	}
-	market := data.MarketOf(symbol)
-	if oddLot && market.LotSize > 1 {
-		market.LotSize = 1
-		market.Name += "-oddlot"
-	}
-	if accountFile == "" {
-		accountFile = papertrading.DefaultAccountPath("paper_accounts", symbol, strat.Name())
-	}
-	params := paramsFromFlags(stratName, short, long, rsiPeriod, rsiLow, rsiHigh, oddLot)
-
-	fmt.Printf("Paper trading %s (market=%s, strategy=%s, account=%s)\n",
-		symbol, market.Name, strat.Name(), accountFile)
-
-	return papertrading.RunDailyUpdate(papertrading.Options{
-		Symbol:      symbol,
-		Strategy:    strat,
-		StratParams: params,
-		Cash:        cash,
-		Market:      market,
-		AccountFile: accountFile,
-		Notifier:    papertrading.ConsoleNotifier{},
-	})
 }
 
 // runHoldCheck answers "if I bought on --start and held to --end (default
@@ -319,20 +256,6 @@ func runHoldCheck(symbol, startStr, endStr string, cash float64, oddLot bool) er
 	return nil
 }
 
-func paramsFromFlags(name string, short, long, rsiPeriod int, rsiLow, rsiHigh float64, oddLot bool) papertrading.StratParams {
-	p := papertrading.StratParams{Name: strings.ToLower(name), OddLot: oddLot}
-	switch p.Name {
-	case "sma":
-		p.Short = short
-		p.Long = long
-	case "rsi":
-		p.RSIPeriod = rsiPeriod
-		p.RSILow = rsiLow
-		p.RSIHigh = rsiHigh
-	}
-	return p
-}
-
 func buildStrategy(name string, short, long, rsiPeriod int, rsiLow, rsiHigh float64) (strategy.Strategy, error) {
 	switch strings.ToLower(name) {
 	case "sma":
@@ -350,12 +273,7 @@ func buildStrategy(name string, short, long, rsiPeriod int, rsiLow, rsiHigh floa
 	}
 }
 
-func safeName(s string) string {
-	r := strings.NewReplacer("/", "_", " ", "_", ".", "_")
-	return r.Replace(s)
-}
-
-func printSummary(s analysis.Summary, outDir string) {
+func printSummary(s analysis.Summary) {
 	fmt.Println()
 	fmt.Println("===== Backtest Summary =====")
 	fmt.Printf("  Symbol         : %s (%s)\n", s.Symbol, s.Market)
@@ -387,9 +305,22 @@ func printSummary(s analysis.Summary, outDir string) {
 		fmt.Printf("  Profit Factor  : n/a (no completed losing trades)\n")
 	}
 	fmt.Printf("  Trade Count    : %d\n", s.TradeCount)
-	if outDir != "" {
-		fmt.Printf("  Output         : %s\n", outDir)
-	} else {
-		fmt.Printf("  Output         : (skipped, --no-output)\n")
+}
+
+// printTrades dumps the full trade ledger to the terminal. Tax column is only
+// meaningful for TW sells; US is always zero.
+func printTrades(trades []engine.Trade, market data.Market) {
+	fmt.Println()
+	fmt.Println("===== Trades =====")
+	if len(trades) == 0 {
+		fmt.Println("  (none)")
+		return
 	}
+	fmt.Printf("  %-10s  %-4s  %12s  %9s  %12s  %12s  %14s\n",
+		"DATE", "SIDE", "PRICE", "SHARES", "FEE", "TAX", "CASH AFTER")
+	for _, t := range trades {
+		fmt.Printf("  %-10s  %-4s  %12.2f  %9d  %12.2f  %12.2f  %14.2f\n",
+			t.Time.Format(dateLayout), string(t.Side), t.Price, t.Shares, t.Fee, t.Tax, t.CashAfter)
+	}
+	fmt.Printf("  (%d trades, prices in %s)\n", len(trades), market.Currency)
 }
